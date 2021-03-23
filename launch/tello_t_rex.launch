@@ -1,0 +1,14 @@
+<launch>
+  <!-- T rex vision for tello drone -->
+
+  <group ns="tello">
+    <!-- convert ros h264 CompressedImage to ros Image -->
+    <node pkg="image_transport" type="republish" name="decode_h264" args="h264 in:=image_raw raw out:=image_decompressed"/>
+
+    <!-- detection mobile objet -->
+    <node name="t_rex_vision" pkg="t_rex_vision" type="t_rex_vision.py" output="screen">
+    <remap from="image_raw" to="image_decompressed"/>
+    </node>
+  </group>
+
+</launch>
