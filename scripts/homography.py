@@ -164,14 +164,14 @@ def run_ransac(x, Hx, threshold, sample_size, goal_inliers, max_iterations, stop
     goal_inliers : is the number of inlier on the dataset
     max_iterations : maximum number of iteration
     stop_at_goal : allow early stop
-    random_seed : a seed to controle the process
+    random_seed : a seed to allow reproductible output
 
     Output
     ------
      best_model: 3x3 array : the homographie H
      best_ic: best consensus value.
      """
-    rg = np.random.default_rng(random_seed)
+
     H_list = []
     n_inlier = []
     n_iter = 0
@@ -182,7 +182,7 @@ def run_ransac(x, Hx, threshold, sample_size, goal_inliers, max_iterations, stop
     GoodEnough = False
     while ((not(GoodEnough & stop_at_goal)) & (n_iter < max_iterations)):
         # select randomly sample_size point pair
-        randomIdx = rg.integers(x.shape[0],size = sample_size)
+        randomIdx = np.random.randint(x.shape[0],size = sample_size)
     
         # calculer le modèle à partir des points choisi
         H = DLTcalib2(x[randomIdx,:], Hx[randomIdx,:])[0]

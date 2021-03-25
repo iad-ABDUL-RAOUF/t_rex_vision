@@ -14,13 +14,9 @@ import numpy as np
 import imutils
 import homography as hm
 
-def somefunct(arg):
-    out = arg
-    return out
 
 class MovingObjectDetector:
     def __init__(self):
-
         rospy.init_node("moving_object_detector", anonymous=False)
         # parameters from the ros parameter server
         self.read_parameters()
@@ -29,7 +25,7 @@ class MovingObjectDetector:
         # publisher
         self.moving_pub = rospy.Publisher('moving_object', Image, queue_size=1)
         # timer
-        self.processing_timer = rospy.Timer(rospy.Duration(0.05), processing)
+        self.processing_timer = rospy.Timer(rospy.Duration(0.05), self.processing)
         # cv_bridge
         self.bridge = cv_bridge.CvBridge()
         # class member
@@ -62,24 +58,24 @@ class MovingObjectDetector:
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~downsamplingStep'), self.param['step'])
 
     def image_callback(self,msg):
-        with mutex_:
+        with self.mutex_:
             try:
                 self.imagePrev_ = self.imageNow_.copy()
+                self.isImage_ = True
             except AttributeError:
                 rospy.logwarn("imageNow_ has no attribute 'copy'. Probably still at init value 'None'")
             # conversion ros image vers opencv
             self.imageNow_ = self.bridge.imgmsg_to_cv2(msg,desired_encoding='bgr8')
             self.isNewImage_ = True
-        if (self.imagePrev_ != None and self.imageNow_ != None)
-            self.isImage_ = True
-        cv2.imshow("debug self.imageNow_", self.imageNow_)
-        cv2.imshow("debug self.imagePrev_", self.imagePrev_)
+
+        # cv2.imshow("debug self.imageNow_", self.imageNow_)
+        # cv2.imshow("debug self.imagePrev_", self.imagePrev_)
         cv2.waitKey(1)
         
-    def processing(self):
+    def processing(self, event):
         if (self.isNewImage_ and self.isImage_):
             # load images
-            with mutex_:
+            with self.mutex_:
                 self.imageNowProcess_ = cv2.cvtColor(self.imageNow_,cv2.COLOR_BGR2GRAY)
                 self.imagePrevProcess_ = cv2.cvtColor(self.imagePrev_,cv2.COLOR_BGR2GRAY)
                 self.isNewImage_ = False
@@ -101,7 +97,7 @@ class MovingObjectDetector:
             # compute down sampled pixel coordinates after they are moved by the optical flow
             self.ds_h_movedPixels = self.ds_h_pixels + np.concatenate(( self.flow[self.step//2::self.step,self.step//2::self.step,0].reshape((-1,1)),
                                                                         self.flow[self.step//2::self.step,self.step//2::self.step,1].reshape((-1,1)),
-                                                                        np.zeros((self.ds_h_pixels.size[0],1))),
+                                                                        np.zeros((self.ds_h_pixels.shape[0],1))),
                                                                         axis = 1)
             # compute homography linking pixel before and after they moved. Correspond to global picture mouvement i.e. ego-motion 
             homography, ds_nIinliers = hm.run_ransac(  self.ds_h_pixels,
@@ -110,36 +106,40 @@ class MovingObjectDetector:
                                                     self.param['ransac']['sample_size'],
                                                     self.goal_inliers,
                                                     self.param['ransac']['max_iterations'],
-                                                    self.param['ransac']['stop_at_goal'])[0:2]
+                                                    self.param['ransac']['stop_at_goal'],
+                                                    None)[0:2]
             if ds_nIinliers == None:
                 rospy.logwarn('ego motion model estimation failed')
             else:
                 # compute outliers in the full image
-                self.h_movedPixels = self.h_pixels + self.flow
+                self.h_movedPixels = self.h_pixels + np.concatenate((   self.flow[:,:,0].reshape((-1,1)),
+                                                                        self.flow[:,:,1].reshape((-1,1)),
+                                                                        np.zeros((self.h*self.w,1))),
+                                                                    axis = 1)
                 self.moving_ = np.logical_not(hm.findHomographyInlier(  homography,
-                                                                            self.h_pixels,
-                                                                            self.h_movedPixels,
-                                                                            self.param['ransac']['threshold']).reshape((self.h, self.v)))
+                                                                        self.h_pixels,
+                                                                        self.h_movedPixels,
+                                                                        self.param['ransac']['threshold']).reshape((self.h, self.w)))
                 rospy.loginfo('%s inliers, %s outliers (moving pixel)', self.moving_.sum(), self.h*self.w - self.moving_.sum())
 
                 # conversion and publication of the moving pixels
-                self.moving_pub.publish(self.bridge.cv2_to_imgmsg(self.moving_.astype(np.float64), encoding="mono8"))
+                self.moving_pub.publish(self.bridge.cv2_to_imgmsg(self.moving_.astype(np.uint8)*255, encoding="mono8"))  
 
                 # graphical display
-                self.mag, self.ang = cv2.cartToPolar(flow[:,:,0], flow[:,:,1])
+                self.mag, self.ang = cv2.cartToPolar(self.flow[:,:,0], self.flow[:,:,1])
                 self.hsv[:,:,0] = (self.ang*180)/(2*np.pi)
                 self.hsv[:,:,2] = (self.mag*255)/np.amax(self.mag)
-                self.bgr = cv2.cvtColor(hsv,cv2.COLOR_HSV2BGR)
-                cv2.imshow("debug self.imageNowProcess_", self.imageNowProcess_)
-                cv2.imshow("debug self.imagePrevProcess_", self.imagePrevProcess_)
-                cv2.imshow('mooving object',self.moving_.astype(np.float64))
-                cv2.imshow('optical flow',bgr)
-                cv2.waitKey(1)
+                self.bgr = cv2.cvtColor(self.hsv,cv2.COLOR_HSV2BGR)
+                # cv2.imshow("debug self.imageNowProcess_", self.imageNowProcess_)
+                # cv2.imshow("debug self.imagePrevProcess_", self.imagePrevProcess_)
+                # cv2.imshow('mooving object',self.moving_.astype(np.uint8)*255)
+                # cv2.imshow('optical flow',self.bgr)
+                # cv2.waitKey(1)
                 
                 
     
     def initBeforeFirstProcess(self):
-        (self.h,self.w,self.c) = self.imageNowProcess_.shape
+        (self.h,self.w) = self.imageNowProcess_.shape
         self.step = self.param['step']
         # homogeneous pixel list 
         hMat, wMat = np.meshgrid(np.arange(self.h), np.arange(self.w), indexing = 'ij')
@@ -158,10 +158,9 @@ class MovingObjectDetector:
         # ransac param
         self.goal_inliers = int(ds_hRange.size*ds_wRange.size*self.param['ransac']['goal_inliers'])
         # graphical display
-        self.hsv = np.zeros_like(self.imageNowProcess_)
+        self.hsv = np.zeros([self.h,self.w,3],dtype=np.uint8)
         self.hsv[:,:,1] = 255 # color saturation
 
-           
         
 
 if __name__ == '__main__':
