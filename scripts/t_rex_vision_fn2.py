@@ -28,6 +28,8 @@ class Flownet2Algorithm:
     def __init__(self, model, model_path, imgH, imgW):
         newh = (imgH // 64) * 64
         neww = (imgW // 64) * 64
+        # print('(imgH,imgW)', (imgH,imgW))
+        # print('(newh,neww)', (newh,neww))
         self.aug = imgaug.CenterCrop((newh, neww))
         self.predict_func = OfflinePredictor(PredictConfig(
             model=model(height=newh, width=neww),
@@ -42,13 +44,14 @@ class Flownet2Algorithm:
         inputPrev, inputNow = [x.astype('float32').transpose(2, 0, 1)[None, ...]
                                 for x in [imgPrev, imgNow]]
         output = self.predict_func(inputPrev, inputNow)[0].transpose(0, 2, 3, 1)
+
+        # debug visualization
         imgOut = self.flow.visualize(output[0])
-        patches = [imgPrev, imgNow, imgOut * 255.]
-        imgOut = viz.stack_patches(patches, 2, 2)
         cv2.imshow('flow output', imgOut)
-        cv2.imwrite('flow_output.png', imgOut)
-        cv2.waitKey(0)
-        return imgOut
+        # cv2.imwrite('/home/iad/flow_output.png', imgOut)
+        cv2.waitKey(1)
+
+        return output[0]
 
 
 
@@ -113,19 +116,20 @@ class MovingObjectDetector:
 
         # cv2.imshow("debug self.imageNow_", self.imageNow_)
         # cv2.imshow("debug self.imagePrev_", self.imagePrev_)
-        cv2.waitKey(1)
+        # cv2.waitKey(1)
         
     def processing(self, event):
         if (self.isNewImage_ and self.isImage_):
             # load images
             with self.mutex_:
-                self.imageNowProcess_ = cv2.cvtColor(self.imageNow_,cv2.COLOR_BGR2GRAY)
-                self.imagePrevProcess_ = cv2.cvtColor(self.imagePrev_,cv2.COLOR_BGR2GRAY)
+                self.imageNowProcess_ = self.imageNow_.copy()
+                self.imagePrevProcess_ = self.imagePrev_.copy()
                 self.isNewImage_ = False
             
             # init some processing variable
             if not(self.isProcessInit_):
                 self.initBeforeFirstProcess()
+                self.isProcessInit_ = True
             
             # do processing
             # compute optical flow. 
@@ -140,6 +144,8 @@ class MovingObjectDetector:
             #                                             poly_sigma = 1.5, # E-T Gaussienne pour calcul dérivées 
             #                                             flags = 0)
             # compute down sampled pixel coordinates after they are moved by the optical flow
+            debug = self.flow[self.step//2::self.step,self.step//2::self.step,0]
+
             self.ds_h_movedPixels = self.ds_h_pixels + np.concatenate(( self.flow[self.step//2::self.step,self.step//2::self.step,0].reshape((-1,1)),
                                                                         self.flow[self.step//2::self.step,self.step//2::self.step,1].reshape((-1,1)),
                                                                         np.zeros((self.ds_h_pixels.shape[0],1))),
@@ -184,7 +190,8 @@ class MovingObjectDetector:
                 
     
     def initBeforeFirstProcess(self):
-        (self.h,self.w) = self.imageNowProcess_.shape
+        (self.h,self.w) = self.imageNowProcess_.shape[:2]
+        (self.h,self.w) = ((self.h // 64) * 64, (self.w // 64) * 64) # flownet shape modification
         self.step = self.param['step']
         # homogeneous pixel list 
         hMat, wMat = np.meshgrid(np.arange(self.h), np.arange(self.w), indexing = 'ij')
