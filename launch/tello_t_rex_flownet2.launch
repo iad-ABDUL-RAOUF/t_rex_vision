@@ -1,0 +1,19 @@
+<launch>
+  <!-- T rex vision for tello drone -->
+
+  <group ns="tello">
+    <!-- convert ros h264 CompressedImage to ros Image -->
+    <node pkg="image_transport" type="republish" name="decode_h264" args="h264 in:=image_raw raw out:=image_decompressed"/>
+
+    <!-- detection mobile objet using flownet2.0 -->
+    <node name="t_rex_vision_fn2" pkg="t_rex_vision" type="t_rex_vision_fn2.py" output="screen">
+      <remap from="image_raw" to="image_decompressed"/>
+      <!-- path to model weight -->
+      <param name="load" value="/home/iad/code/rob314/flownet2-s.npz" />
+      <!-- flownet model -->
+      <param name="model" value="flownet2-s" /> 
+    </node>
+  </group>
+
+</launch>
+
