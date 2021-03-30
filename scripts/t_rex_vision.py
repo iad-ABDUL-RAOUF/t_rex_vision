@@ -69,7 +69,7 @@ class MovingObjectDetector:
 
         # cv2.imshow("debug self.imageNow_", self.imageNow_)
         # cv2.imshow("debug self.imagePrev_", self.imagePrev_)
-        cv2.waitKey(1)
+        # cv2.waitKey(1)
         
     def processing(self, event):
         if (self.isNewImage_ and self.isImage_):
@@ -82,6 +82,7 @@ class MovingObjectDetector:
             # init some processing variable
             if not(self.isProcessInit_):
                 self.initBeforeFirstProcess()
+                self.isProcessInit_ = True
             
             # do processing
             # compute optical flow. TODO put optical flow parameters in the parameter server
