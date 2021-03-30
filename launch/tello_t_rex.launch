@@ -7,7 +7,7 @@
 
     <!-- detection mobile objet -->
     <node name="t_rex_vision" pkg="t_rex_vision" type="t_rex_vision.py" output="screen">
-    <remap from="image_raw" to="image_decompressed"/>
+      <remap from="image_raw" to="image_decompressed"/>
     </node>
   </group>
 
