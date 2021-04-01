@@ -11,4 +11,7 @@
     </node>
   </group>
 
+  <node pkg="rqt_image_view" type="rqt_image_view" name="image_view_tello_cam" args="/tello/image_decompressed"/>
+  <node pkg="rqt_image_view" type="rqt_image_view" name="image_view_mooving" args="/tello/moving_object"/>
+
 </launch>

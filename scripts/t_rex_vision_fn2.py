@@ -28,8 +28,6 @@ class Flownet2Algorithm:
     def __init__(self, model, model_path, imgH, imgW):
         newh = (imgH // 64) * 64
         neww = (imgW // 64) * 64
-        # print('(imgH,imgW)', (imgH,imgW))
-        # print('(newh,neww)', (newh,neww))
         self.aug = imgaug.CenterCrop((newh, neww))
         self.predict_func = OfflinePredictor(PredictConfig(
             model=model(height=newh, width=neww),
@@ -47,6 +45,8 @@ class Flownet2Algorithm:
 
         # debug visualization
         imgOut = self.flow.visualize(output[0])
+        cv2.imshow('imgPrev', imgPrev)
+        cv2.imshow('imgNow', imgNow)
         cv2.imshow('flow output', imgOut)
         # cv2.imwrite('/home/iad/flow_output.png', imgOut)
         cv2.waitKey(1)
@@ -69,6 +69,7 @@ class MovingObjectDetector:
         # cv_bridge
         self.bridge = cv_bridge.CvBridge()
         # class member
+        self.count = self.param['stepImage']
         self.isImage_ = False
         self.isNewImage_ = False
         self.isProcessInit_ = False
@@ -83,15 +84,15 @@ class MovingObjectDetector:
         self.param = {}
         # ransac
         self.param['ransac'] = {}
-        self.param['ransac']['threshold'] = rospy.get_param('~ransac/threshold', 1.0)
+        self.param['ransac']['threshold'] = rospy.get_param('~ransac/threshold', 12.0)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/threshold'), self.param['ransac']['threshold'])
         self.param['ransac']['sample_size'] = rospy.get_param('~ransac/sample_size', 5)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/sample_size'), self.param['ransac']['sample_size'])
-        self.param['ransac']['goal_inliers'] = rospy.get_param('~ransac/goal_inliers', 0.6)
+        self.param['ransac']['goal_inliers'] = rospy.get_param('~ransac/goal_inliers', 0.80)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/goal_inliers'), self.param['ransac']['goal_inliers'])
-        self.param['ransac']['max_iterations'] = rospy.get_param('~ransac/max_iterations', 100)
+        self.param['ransac']['max_iterations'] = rospy.get_param('~ransac/max_iterations', 200)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/max_iterations'), self.param['ransac']['max_iterations'])
-        self.param['ransac']['stop_at_goal'] = rospy.get_param('~ransac/stop_at_goal', True)
+        self.param['ransac']['stop_at_goal'] = rospy.get_param('~ransac/stop_at_goal', False)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/stop_at_goal'), self.param['ransac']['stop_at_goal'])
         # flownet2
         self.param['flownet2'] = {}
@@ -100,19 +101,35 @@ class MovingObjectDetector:
         self.param['flownet2']['model'] = rospy.get_param('~model')
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~model'), self.param['flownet2']['model'])
         # other params
-        self.param['step'] = rospy.get_param('~downsamplingStep', 20)
+        self.param['step'] = rospy.get_param('~downsamplingStep', 40)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~downsamplingStep'), self.param['step'])
+        self.param['stepImage'] = rospy.get_param('~consecutiveImageStep', 8)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~consecutiveImageStep'), self.param['stepImage'])
+        # crop
+        self.param['crophmin'] = rospy.get_param('~crophmin', 200)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~crophmin'), self.param['crophmin'])
+        self.param['crophmax'] = rospy.get_param('~crophmax', 50)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~crophmax'), self.param['crophmax'])
+        self.param['cropwmin'] = rospy.get_param('~cropwmin', 50)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~cropwmin'), self.param['cropwmin'])
+        self.param['cropwmax'] = rospy.get_param('~cropwmax', 50)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~cropwmax'), self.param['cropwmax'])
 
     def image_callback(self,msg):
-        with self.mutex_:
-            try:
-                self.imagePrev_ = self.imageNow_.copy()
-                self.isImage_ = True
-            except AttributeError:
-                rospy.logwarn("imageNow_ has no attribute 'copy'. Probably still at init value 'None'")
-            # conversion ros image vers opencv
-            self.imageNow_ = self.bridge.imgmsg_to_cv2(msg,desired_encoding='bgr8')
-            self.isNewImage_ = True
+        self.count = self.count +1
+        if self.param['stepImage'] <= self.count:
+            with self.mutex_:
+                try:
+                    self.imagePrev_ = self.imageNow_.copy()
+                    self.isImage_ = True
+                except AttributeError:
+                    rospy.logwarn("imageNow_ has no attribute 'copy'. Probably still at init value 'None'")
+                # conversion ros image vers opencv
+                self.imageRead_ = self.bridge.imgmsg_to_cv2(msg,desired_encoding='bgr8')
+                shape = self.imageRead_.shape
+                self.imageNow_ = self.imageRead_[self.param['crophmin']:shape[0]-self.param['crophmax'],self.param['cropwmin']:shape[1]-self.param['cropwmax']]
+                self.isNewImage_ = True
+            self.count = 0
 
         # cv2.imshow("debug self.imageNow_", self.imageNow_)
         # cv2.imshow("debug self.imagePrev_", self.imagePrev_)
@@ -144,8 +161,6 @@ class MovingObjectDetector:
             #                                             poly_sigma = 1.5, # E-T Gaussienne pour calcul dérivées 
             #                                             flags = 0)
             # compute down sampled pixel coordinates after they are moved by the optical flow
-            debug = self.flow[self.step//2::self.step,self.step//2::self.step,0]
-
             self.ds_h_movedPixels = self.ds_h_pixels + np.concatenate(( self.flow[self.step//2::self.step,self.step//2::self.step,0].reshape((-1,1)),
                                                                         self.flow[self.step//2::self.step,self.step//2::self.step,1].reshape((-1,1)),
                                                                         np.zeros((self.ds_h_pixels.shape[0],1))),

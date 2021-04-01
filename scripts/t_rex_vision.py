@@ -28,6 +28,7 @@ class MovingObjectDetector:
         # cv_bridge
         self.bridge = cv_bridge.CvBridge()
         # class member
+        self.count = self.param['stepImage']
         self.isImage_ = False
         self.isNewImage_ = False
         self.isProcessInit_ = False
@@ -41,8 +42,8 @@ class MovingObjectDetector:
     def read_parameters(self):
         self.param = {}
         self.param['ransac'] = {}
-        # ransac
-        self.param['ransac']['threshold'] = rospy.get_param('~ransac/threshold', 1.0)
+        # ransac TODO virer param inutile
+        self.param['ransac']['threshold'] = rospy.get_param('~ransac/threshold', 15.0)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/threshold'), self.param['ransac']['threshold'])
         self.param['ransac']['sample_size'] = rospy.get_param('~ransac/sample_size', 5)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~ransac/sample_size'), self.param['ransac']['sample_size'])
@@ -55,17 +56,34 @@ class MovingObjectDetector:
         # other params
         self.param['step'] = rospy.get_param('~downsamplingStep', 20)
         rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~downsamplingStep'), self.param['step'])
+        self.param['stepImage'] = rospy.get_param('~consecutiveImageStep', 8)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~consecutiveImageStep'), self.param['stepImage'])
+        # crop
+        self.param['crophmin'] = rospy.get_param('~crophmin', 200)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~crophmin'), self.param['crophmin'])
+        self.param['crophmax'] = rospy.get_param('~crophmax', 0)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~crophmax'), self.param['crophmax'])
+        self.param['cropwmin'] = rospy.get_param('~cropwmin', 0)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~cropwmin'), self.param['cropwmin'])
+        self.param['cropwmax'] = rospy.get_param('~cropwmax', 0)
+        rospy.loginfo('Parameter %s has value %s', rospy.resolve_name('~cropwmax'), self.param['cropwmax'])
+
 
     def image_callback(self,msg):
-        with self.mutex_:
-            try:
-                self.imagePrev_ = self.imageNow_.copy()
-                self.isImage_ = True
-            except AttributeError:
-                rospy.logwarn("imageNow_ has no attribute 'copy'. Probably still at init value 'None'")
-            # conversion ros image vers opencv
-            self.imageNow_ = self.bridge.imgmsg_to_cv2(msg,desired_encoding='bgr8')
-            self.isNewImage_ = True
+        self.count = self.count +1
+        if self.param['stepImage'] <= self.count:
+            with self.mutex_:
+                try:
+                    self.imagePrev_ = self.imageNow_.copy()
+                    self.isImage_ = True
+                except AttributeError:
+                    rospy.logwarn("imageNow_ has no attribute 'copy'. Probably still at init value 'None'")
+                # conversion ros image vers opencv
+                self.imageRead_ = self.bridge.imgmsg_to_cv2(msg,desired_encoding='bgr8')
+                shape = self.imageRead_.shape
+                self.imageNow_ = self.imageRead_[self.param['crophmin']:shape[0]-self.param['crophmax'],self.param['cropwmin']:shape[1]-self.param['cropwmax']]
+                self.isNewImage_ = True
+            self.count = 0
 
         # cv2.imshow("debug self.imageNow_", self.imageNow_)
         # cv2.imshow("debug self.imagePrev_", self.imagePrev_)
@@ -100,15 +118,16 @@ class MovingObjectDetector:
                                                                         np.zeros((self.ds_h_pixels.shape[0],1))),
                                                                         axis = 1)
             # compute homography linking pixel before and after they moved. Correspond to global picture mouvement i.e. ego-motion 
-            homography, ds_nIinliers = hm.run_ransac(  self.ds_h_pixels,
-                                                    self.ds_h_movedPixels,
-                                                    self.param['ransac']['threshold'],
-                                                    self.param['ransac']['sample_size'],
-                                                    self.goal_inliers,
-                                                    self.param['ransac']['max_iterations'],
-                                                    self.param['ransac']['stop_at_goal'],
-                                                    None)[0:2]
-            if ds_nIinliers == None:
+            # homography, ds_nIinliers = hm.run_ransac(  self.ds_h_pixels,
+            #                                         self.ds_h_movedPixels,
+            #                                         self.param['ransac']['threshold'],
+            #                                         self.param['ransac']['sample_size'],
+            #                                         self.goal_inliers,
+            #                                         self.param['ransac']['max_iterations'],
+            #                                         self.param['ransac']['stop_at_goal'],
+            #                                         None)[0:2]
+            homography = cv2.findHomography(self.ds_h_pixels, self.ds_h_movedPixels, cv2.RANSAC, self.param['ransac']['threshold'])[0]
+            if homography.size == 0:
                 rospy.logwarn('ego motion model estimation failed')
             else:
                 # compute outliers in the full image
@@ -133,8 +152,10 @@ class MovingObjectDetector:
                 # cv2.imshow("debug self.imageNowProcess_", self.imageNowProcess_)
                 # cv2.imshow("debug self.imagePrevProcess_", self.imagePrevProcess_)
                 # cv2.imshow('mooving object',self.moving_.astype(np.uint8)*255)
-                # cv2.imshow('optical flow',self.bgr)
-                # cv2.waitKey(1)
+                cv2.imshow('self.imagePrevProcess_',self.imagePrevProcess_)
+                cv2.imshow('self.imageNowProcess_',self.imageNowProcess_)
+                cv2.imshow('optical flow',self.bgr)
+                cv2.waitKey(1)
                 
                 
     
